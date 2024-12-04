@@ -9,7 +9,7 @@
 # The core projects and autograders were primarily created by John DeNero
 # (denero@cs.berkeley.edu) and Dan Klein (klein@cs.berkeley.edu).
 # Student side autograding was added by Brad Miller, Nick Hay, and
-# Pieter Abbeel (pabbeel@cs.berkeley.eduu).
+# Pieter Abbeel (pabbeel@cs.berkeley.edu).
 
 
 # baseline_team.py
@@ -332,7 +332,6 @@ class OffensiveReflexAgent(CaptureAgent):
         carrying_food = game_state.get_agent_state(self.index).num_carrying
         food_list = self.get_food(game_state).as_list()
         my_pos = game_state.get_agent_state(self.index).get_position()
-        print(carrying_food)
 
         # 1. Sin comida (buscar comida)
         if carrying_food == 0:
@@ -413,166 +412,170 @@ class OffensiveReflexAgent(CaptureAgent):
             self.last_positions.pop(0)
 
 
-class DefensiveReflexAgent(ReflexCaptureAgent):
+
+class DefensiveReflexAgent(CaptureAgent):
     """
-    Un agente defensor diseñado para eliminar pacman enemigos.
-    Su único objetivo es detectar y perseguir a los invasores hasta erradicarlos.
+    Agente defensor que patrulla la frontera y reacciona ante atacantes sin cruzar al campo enemigo.
     """
-    def registerInitialState(self, gameState):
-        self.start = gameState.getAgentPosition(self.index)
-        CaptureAgent.registerInitialState(self, gameState)
-        self.initFood = self.getFoodYouAreDefending(gameState).asList()
-        self.chaseDest = []
-        height = (gameState.data.layout.height - 2) / 2
-        i = 0
 
-        # Calculate the central point of the map, and set it as the defender initial position
-        if self.red:
-            for central in range((gameState.data.layout.width - 2) / 2,0,-1):
-                if not gameState.hasWall(central, height):
-                    self.detectDest = [(central,height)]
-                    i = i+1
-                    if i == 2:
-                        break
+    def __init__(self, index):
+        super().__init__(index)
+        self.target = None  # Objetivo actual del defensor
+        self.border_positions = []  # Posiciones en la frontera
+        self.food_positions = []  # Comida actual en nuestro campo
 
-        else:
-            for central in range((gameState.data.layout.width - 2) / 2 + 1 ,gameState.data.layout.width,1):
-                if not gameState.hasWall(central, height):
-                    self.detectDest = [(central,height)]
-                    i = i+1
-                    if i == 2:
-                        break
-
-
-    def chooseAction(self, gameState):
+    def register_initial_state(self, game_state):
         """
-        Picks among the actions with the highest Q(s,a).
-
-        This function considers the following cases: 
-            1.  No invader, no lost food (initial stage).
-                Go to the initial defender place.
-            2.  Detect there is an invader.
-                Go to the invader place to eat it.
-            3.  No invader detected, detect lost food. 
-                Go to the lost food position(updated regularly).
-            4.  Find the invader on the way to the lost food position.
-                Give the priority to chase invader.
-            5.  Go to enemy territory to eat food during first 30 steps 
-            of "scared" situation, otherwise stay in the initial defender 
-            position to defend invaders. 
-
+        Inicializa el estado del agente.
         """
+        CaptureAgent.register_initial_state(self, game_state)
 
-        actions = gameState.get_legalActions(self.index)
+        # Calcula las posiciones de la frontera
+        self.border_positions = self.get_border_positions(game_state)
 
-        # You can profile your evaluation time by uncommenting these lines
-        # start = time.time()
-        values = [self.evaluate(gameState, a) for a in actions]
-        # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
+        # Calcula las posiciones iniciales de la comida
+        self.food_positions = self.get_food_you_are_defending(game_state).as_list()
 
-        maxValue = max(values)
-        bestActions = [a for a, v in zip(actions, values) if v == maxValue]
-        currEnemies = [gameState.getAgentState(i) for i in self.getOpponents(gameState)]
-        currInvader = [enemy for enemy in currEnemies if enemy.isPacman and enemy.getPosition() != None]
-        foodList = self.get_food_you_are_defending(gameState).as_list()
-        loc = gameState.get_agent_state(self.index).getPosition()
+    def choose_action(self, game_state):
+        """
+        Elige una acción basada en el estado del juego.
+        """
+        actions = game_state.get_legal_actions(self.index)
+        actions = self.filter_safe_actions(game_state, actions)  # Filtra acciones que no cruzan al enemigo
 
-
-        if len(self.initFood) - len(foodList) > 0:
-            eatenFood = list(set(self.initFood).difference(set(foodList)))
-            self.initFood = foodList
-            self.chaseDest = eatenFood
-            agentState = gameState.get_agent(self.index)
-
-        ''' Attack !!! '''
-        if agentState.scaredTimer > 10: 
-            attackValues = [self.evaluateAttack(gameState, a) for a in actions]
-            maxAttackValue = max(attackValues)
-            bestAttackActions = [a for a, v in zip(actions, attackValues) if v == maxAttackValue]
-            return random.choice(bestAttackActions)
-
-        elif agentState.scaredTimer <= 10:
-            if len(currInvader) > 0:
-                foodLeft = len(self.getFood(gameState).asList())
-                self.chaseDest = []
-        elif len(self.chaseDest)>0:
-            self.chaseFood = self.AStar(gameState,self.chaseDest[0]) 
-            if len(self.chaseFood)>0:        
-                return self.chaseFood[0]
-            if loc == self.chaseDest[0]:      
-                self.chaseDest = []
-    
-        elif len(self.detectDest)>0:
-            self.searchActions = self.AStar(gameState, self.detectDest[0])
-            if len(self.searchActions)>0:       
-                return self.searchActions[0]
-        return random.choice(bestActions)
-
-    def get_features(self, game_state, action):
-        features = util.Counter()
-        successor = self.get_successor(game_state, action)
-
-        my_state = successor.get_agent_state(self.index)
-        my_pos = my_state.get_position()
-
-        # Si estamos en defensa (y no somos pacman)
-        features['on_defense'] = 1
-        if my_state.is_pacman:
-            features['on_defense'] = 0
-
-        # Encuentra los invasores (pacman enemigos)
-        enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
+        enemies = [game_state.get_agent_state(i) for i in self.get_opponents(game_state)]
         invaders = [a for a in enemies if a.is_pacman and a.get_position() is not None]
-        features['num_invaders'] = len(invaders)
 
-        if len(invaders) > 0:
-            # Calcula la distancia al invasor más cercano
-            invader_distances = [self.get_maze_distance(my_pos, a.get_position()) for a in invaders]
-            closest_invader_distance = min(invader_distances)
-            features['invader_distance'] = closest_invader_distance
+        # Si hay atacantes visibles, priorizamos interceptarlos
+        if invaders:
+            self.target = self.closest_invader(game_state, invaders)
+            return self.move_to_target(game_state, self.target, actions)
 
-            # Si estamos muy cerca del invasor (distancia 1), es hora de capturarlo
-            if closest_invader_distance == 1:
-                features['capture_invader'] = 100  # Alta recompensa por capturar un invader
-            else:
-                features['capture_invader'] = 0  # Si no está cerca, no hay recompensa
+        # Si detectamos comida desaparecida, investigar esa zona
+        disappearing_food = self.detect_disappearing_food(game_state)
+        if disappearing_food:
+            self.target = disappearing_food
+            return self.move_to_target(game_state, self.target, actions)
 
-            # La prioridad es perseguir al invasor
-            features['pursuit'] = -closest_invader_distance  # Penaliza más lejos del invasor
+        # Patrullar la frontera dinámicamente si no hay amenazas visibles
+        self.target = self.get_safe_border_target(game_state)
+        return self.move_to_target(game_state, self.target, actions)
 
+    def get_safe_border_target(self, game_state):
+        """
+        Encuentra un objetivo seguro en la frontera. Se asegura de que no sea una esquina o una posición peligrosa.
+        """
+        safe_border_positions = []
+
+        # Revisar todas las posiciones en la frontera
+        for position in self.border_positions:
+            # Asegúrate de que haya espacio para moverse alrededor
+            if not self.is_trapped(game_state, position):
+                safe_border_positions.append(position)
+
+        # Si encontramos posiciones seguras, elige una aleatoria
+        if safe_border_positions:
+            return random.choice(safe_border_positions)
         else:
-            # Si no hay invasores, la "distancia al invasor" es arbitraria
-            features['invader_distance'] = 10
-            features['pursuit'] = 0
+            # Si todas las posiciones en la frontera son peligrosas, elige una aleatoria de todas formas
+            return random.choice(self.border_positions)
 
-        # Penaliza detenerse (debemos estar en movimiento)
-        if action == Directions.STOP:
-            features['stop'] = 1
-
-        # Penaliza si nos damos la vuelta (reversa), no tiene sentido en este contexto
-        rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
-        if action == rev:
-            features['reverse'] = 1
-
-        return features
-
-    def get_weights(self, game_state, action):
+    def is_trapped(self, game_state, position):
         """
-        Los pesos de las características. Se enfoca en la persecución de invaders.
+        Verifica si una posición está atrapada en una esquina o cerca de una pared sin suficientes opciones de movimiento.
         """
-        return {
-            'num_invaders': -1000,            # Penaliza si hay invasores no detectados
-            'on_defense': 500,                # Alta prioridad en defender
-            'invader_distance': -100,          # Mientras más cerca de un invasor, mejor
-            'pursuit': -50,                    # Penaliza cuando estamos más lejos de un invasor
-            'capture_invader': 1000,          # Recompensa por capturar un invader
-            'stop': -100000,                     # Penaliza detenerse (no podemos quedarnos quietos)
-            'reverse': -50                    # Penaliza dar marcha atrás
-        }
+        x, y = position
+        walls = game_state.data.layout.walls
+
+        # Verifica si hay paredes alrededor (más de 2 paredes cerca)
+        wall_count = 0
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            if walls[x + dx][y + dy]:
+                wall_count += 1
+
+        # Si la posición tiene más de dos paredes cerca, considerarla como atrapada
+        return wall_count >= 3
+
+    def filter_safe_actions(self, game_state, actions):
+        """
+        Filtra acciones para que el defensor no cruce al campo enemigo.
+        """
+        safe_actions = []
+        for action in actions:
+            successor = self.get_successor(game_state, action)
+            pos = successor.get_agent_state(self.index).get_position()
+
+            # Verifica que la posición esté en nuestro lado del mapa
+            if self.is_in_own_half(game_state, pos):
+                safe_actions.append(action)
+
+        return safe_actions
+
+    def is_in_own_half(self, game_state, position):
+        """
+        Verifica si una posición está en nuestro lado del mapa.
+        """
+        layout_width = game_state.data.layout.width
+        if self.red:
+            return position[0] <= layout_width // 2 - 1  # Si somos rojos, nuestro campo está a la izquierda
+        else:
+            return position[0] >= layout_width // 2  # Si somos azules, nuestro campo está a la derecha
+
+    def get_border_positions(self, game_state):
+        """
+        Calcula las posiciones clave en la frontera de nuestro territorio.
+        """
+        layout_width = game_state.data.layout.width
+        layout_height = game_state.data.layout.height
+        border_x = layout_width // 2 - 1 if self.red else layout_width // 2
+
+        # Retorna posiciones en la frontera que no son paredes
+        return [(border_x, y) for y in range(layout_height) if not game_state.has_wall(border_x, y)]
+
+    def detect_disappearing_food(self, game_state):
+        """
+        Detecta comida que ha desaparecido (indicador de ataque enemigo).
+        """
+        previous_food = self.get_food_you_are_defending(self.get_previous_observation()).as_list() if self.get_previous_observation() else []
+        current_food = self.get_food_you_are_defending(game_state).as_list()
+
+        # Encuentra comida que desapareció
+        if previous_food:
+            missing_food = set(previous_food) - set(current_food)
+            if missing_food:
+                return missing_food.pop()  # Devuelve una posición de comida desaparecida
+
+        return None
+
+    def closest_invader(self, game_state, invaders):
+        """
+        Encuentra al invasor más cercano al defensor.
+        """
+        my_pos = game_state.get_agent_position(self.index)
+        distances = [(invader.get_position(), self.get_maze_distance(my_pos, invader.get_position())) for invader in invaders]
+        return min(distances, key=lambda x: x[1])[0]
+
+    def move_to_target(self, game_state, target, actions):
+        """
+        Calcula la acción para moverse hacia el objetivo.
+        """
+        best_action = None
+        best_distance = float('inf')
+
+        for action in actions:
+            successor = self.get_successor(game_state, action)
+            pos = successor.get_agent_state(self.index).get_position()
+            distance = self.get_maze_distance(pos, target)
+            if distance < best_distance:
+                best_action = action
+                best_distance = distance
+
+        return best_action
 
     def get_successor(self, game_state, action):
         """
-        Encuentra el sucesor (el estado resultante de la acción).
+        
+        Genera el sucesor resultante de la acción.
         """
         successor = game_state.generate_successor(self.index, action)
         return successor
